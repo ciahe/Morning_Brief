@@ -5,7 +5,7 @@ import yfinance as yf
 import finnhub
 
 # ====================== CONFIG ======================
-FINNHUB_API_KEY = "d734bs9r01qn7f07inigd734bs9r01qn7f07inj0"   # ← Your Finnhub key
+FINNHUB_API_KEY = "d734bs9r01qn7f07inigd734bs9r01qn7f07inj0"   # ← Your key here
 
 st.set_page_config(page_title="🌅 Antonny's Morning Brief", page_icon="📈", layout="centered")
 
@@ -18,7 +18,7 @@ WATCHLIST = {
     "ACN": "ACN", "SAP": "SAP",
     "BTC-USD": "BTC", "SOL-USD": "SOL",
     "GLD": "GLD",
-    "FBMPM.L": "CPO (Palm Oil)"   # Added back
+    "FBMPM.L": "CPO (Palm Oil USD)"   # Now in USD
 }
 
 finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
@@ -26,21 +26,42 @@ finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
 @st.cache_data(ttl=600, show_spinner="Fetching latest prices...")
 def get_performance(ticker: str):
     try:
-        is_crypto = ticker in ["BTC-USD", "SOL-USD"]
+        if ticker == "FBMPM.L":
+            # Special handling for CPO in USD
+            asset = yf.Ticker(ticker)
+            hist_1d = asset.history(period="2d")
+            hist_1w = asset.history(period="7d")
+            hist_1m = asset.history(period="1mo")
+            
+            # Get price in MYR
+            myr_price = hist_1d['Close'].iloc[-1] if not hist_1d.empty else None
+            
+            # Get USD/MYR exchange rate
+            usdmYR = yf.Ticker("MYR=X")
+            usdmyr_hist = usdmYR.history(period="1d")
+            exchange_rate = usdmyr_hist['Close'].iloc[-1] if not usdmyr_hist.empty else 4.4  # fallback ~4.4 MYR per USD
+            
+            if myr_price and exchange_rate:
+                price = myr_price / exchange_rate   # Convert to USD
+            else:
+                price = myr_price  # fallback
 
-        if is_crypto:
+            asset_for_hist = asset
+
+        elif ticker in ["BTC-USD", "SOL-USD"]:
             asset = yf.Ticker(ticker)
             info = asset.fast_info if hasattr(asset, 'fast_info') else asset.info
             price = (info.get('lastPrice') or info.get('regularMarketPrice') or 
                      info.get('currentPrice') or info.get('previousClose'))
             asset_for_hist = asset
+
         else:
-            # Finnhub for stocks + GLD + CPO
+            # Stocks + GLD
             quote = finnhub_client.quote(ticker)
             price = quote.get('c')
             asset_for_hist = yf.Ticker(ticker)
 
-        if price is None:
+        if price is None and 'asset_for_hist' in locals():
             hist_temp = asset_for_hist.history(period="1d")
             if not hist_temp.empty:
                 price = hist_temp['Close'].iloc[-1]
@@ -84,7 +105,7 @@ for ticker, display_name in WATCHLIST.items():
     emoji = "🟢" if (perf.get('change_1d') or 0) >= 0 else "🔴" if perf.get('change_1d') is not None else "⚪"
 
     data_rows.append({
-        "Asset": f"{emoji} {ticker}",
+        "Asset": f"{emoji} {display_name if ticker == 'FBMPM.L' else ticker}",
         "Price": f"${perf['price']}" if perf['price'] != "N/A" else "N/A",
         "1D %": d1,
         "1W %": w1,
@@ -98,16 +119,16 @@ for ticker, display_name in WATCHLIST.items():
 
 df = pd.DataFrame(data_rows)
 
-# Apply color styling to percentage columns
+# Color styling
 def color_percent(val):
     if val == "N/A":
         return ''
     try:
         num = float(val.strip('%'))
         if num >= 0:
-            return 'background-color: #d4edda; color: #155724;'  # light green
+            return 'background-color: #d4edda; color: #155724;'
         else:
-            return 'background-color: #f8d7da; color: #721c24;'  # light red
+            return 'background-color: #f8d7da; color: #721c24;'
     except:
         return ''
 
@@ -121,15 +142,15 @@ st.divider()
 if total_with_data > 0:
     bullish_ratio = positive_count / total_with_data
     if bullish_ratio >= 0.7:
-        vibe = "🚀 **Strong Bullish** – Tech and crypto leading the way today."
-    elif bullish_ratio >= 0.5:
-        vibe = "📈 **Mildly Bullish** – Mostly positive momentum across the board."
-    elif bullish_ratio >= 0.3:
-        vibe = "⚖️ **Mixed / Neutral** – Balanced moves, watch for direction."
+        vibe = "🚀 **Strong Bullish** – Tech, crypto, and commodities showing strength."
+    elif bullish_ratio >= 0.55:
+        vibe = "📈 **Mildly Bullish** – Mostly green across the board."
+    elif bullish_ratio >= 0.4:
+        vibe = "⚖️ **Mixed / Neutral** – Balanced moves today."
     else:
-        vibe = "📉 **Cautious / Bearish** – More red than green today."
+        vibe = "📉 **Cautious / Bearish** – More caution in the market."
 else:
-    vibe = "⚪ **Market data still loading** – Refresh to see the vibe."
+    vibe = "⚪ **Data still loading** – Click Refresh"
 
 st.subheader("🌡️ Overall Market Vibe")
 st.markdown(vibe)
@@ -139,4 +160,4 @@ if st.button("🔄 Refresh All Data"):
     st.cache_data.clear()
     st.rerun()
 
-st.caption("Hybrid data source (Finnhub + Yahoo Finance) • Colored % changes • CPO via FBMPM.L • Refresh anytime")
+st.caption("CPO converted to USD • Hybrid data (Finnhub + Yahoo Finance) • Colored % changes • Refresh for latest")
