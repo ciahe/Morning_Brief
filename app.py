@@ -5,7 +5,7 @@ import finnhub
 import time
 
 # ====================== CONFIG ======================
-FINNHUB_API_KEY = "YOUR_FINNHUB_API_KEY_HERE"   # ← Replace with your key
+FINNHUB_API_KEY = "Yd734bs9r01qn7f07inigd734bs9r01qn7f07inj0"   # ← Replace with your key
 
 st.set_page_config(
     page_title="🌅 Antonny's Morning Brief",
