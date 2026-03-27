@@ -18,7 +18,7 @@ WATCHLIST = {
     "ACN": "ACN", "SAP": "SAP",
     "BTC-USD": "BTC", "SOL-USD": "SOL",
     "GLD": "GLD",
-    "FBMPM.L": "CPO (Palm Oil USD)"   # Now shown in USD
+    "FBMPM.L": "CPO (Palm Oil USD)"
 }
 
 finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
@@ -27,59 +27,45 @@ finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
 def get_performance(ticker: str):
     try:
         if ticker == "FBMPM.L":
-            # === CPO in USD with multiple fallbacks ===
-            # 1. Try FBMPM.L (MYR index)
+            # === CPO Price in USD ===
             asset = yf.Ticker("FBMPM.L")
-            hist = asset.history(period="2d")
-            myr_price = hist['Close'].iloc[-1] if not hist.empty else None
+            hist_price = asset.history(period="2d")
+            myr_price = hist_price['Close'].iloc[-1] if not hist_price.empty else None
 
-            # 2. Get USD/MYR exchange rate
+            # Get exchange rate
             exchange = yf.Ticker("MYR=X")
             ex_hist = exchange.history(period="1d")
-            usd_myr = ex_hist['Close'].iloc[-1] if not ex_hist.empty else 4.45  # safe fallback
+            usd_myr = ex_hist['Close'].iloc[-1] if not ex_hist.empty else 4.45
 
-            if myr_price and usd_myr:
-                price_usd = myr_price / usd_myr
-            else:
-                price_usd = None
+            price = myr_price / usd_myr if myr_price else None
 
-            # 3. Strong fallback: Try direct USD Palm Oil data if available
-            if price_usd is None or price_usd < 100:  # invalid if too low
-                try:
-                    # Some users succeed with commodity proxies or Investing.com related symbols
-                    fallback = yf.Ticker("CPO=F")  # or try other futures if needed
-                    f_hist = fallback.history(period="2d")
-                    if not f_hist.empty:
-                        price_usd = f_hist['Close'].iloc[-1]
-                except:
-                    pass
-
-            asset_for_hist = asset
-            price = price_usd
+            # === Use a more reliable ticker for % changes (KLSE proxy or fallback) ===
+            hist_asset = yf.Ticker("^KLSE")   # Kuala Lumpur Composite as proxy for history
+            hist_1d = hist_asset.history(period="2d")
+            hist_1w = hist_asset.history(period="7d")
+            hist_1m = hist_asset.history(period="1mo")
 
         elif ticker in ["BTC-USD", "SOL-USD"]:
             asset = yf.Ticker(ticker)
             info = asset.fast_info if hasattr(asset, 'fast_info') else asset.info
-            price = (info.get('lastPrice') or info.get('regularMarketPrice') or 
-                     info.get('currentPrice') or info.get('previousClose'))
-            asset_for_hist = asset
+            price = (info.get('lastPrice') or info.get('regularMarketPrice') or info.get('previousClose'))
+            hist_1d = asset.history(period="2d")
+            hist_1w = asset.history(period="7d")
+            hist_1m = asset.history(period="1mo")
+            hist_asset = asset
 
         else:
-            # Normal stocks + GLD
             quote = finnhub_client.quote(ticker)
             price = quote.get('c')
-            asset_for_hist = yf.Ticker(ticker)
+            hist_asset = yf.Ticker(ticker)
+            hist_1d = hist_asset.history(period="2d")
+            hist_1w = hist_asset.history(period="7d")
+            hist_1m = hist_asset.history(period="1mo")
 
-        # Final price safety net
-        if price is None or price == 0:
-            hist_temp = asset_for_hist.history(period="1d")
-            if not hist_temp.empty:
-                price = hist_temp['Close'].iloc[-1]
-
-        # Calculate % changes
-        hist_1d = asset_for_hist.history(period="2d")
-        hist_1w = asset_for_hist.history(period="7d")
-        hist_1m = asset_for_hist.history(period="1mo")
+        if price is None and 'hist_asset' in locals():
+            temp_hist = hist_asset.history(period="1d")
+            if not temp_hist.empty:
+                price = temp_hist['Close'].iloc[-1]
 
         def calc_pct(hist):
             if hist.empty or len(hist) < 2:
@@ -96,7 +82,7 @@ def get_performance(ticker: str):
             "change_1w": change_1w,
             "change_1m": change_1m
         }
-    except Exception as e:
+    except:
         return {"price": "N/A", "change_1d": None, "change_1w": None, "change_1m": None}
 
 # ====================== TABLE ======================
@@ -146,7 +132,7 @@ styled_df = df.style.applymap(color_percent, subset=['1D %', '1W %', '1M %'])
 
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# Overall Vibe
+# ====================== VIBE ======================
 st.divider()
 if total_with_data > 0:
     bullish_ratio = positive_count / total_with_data
@@ -165,4 +151,4 @@ if st.button("🔄 Refresh All Data"):
     st.cache_data.clear()
     st.rerun()
 
-st.caption("CPO converted to USD (with multiple fallbacks) • Colored percentages • Refresh if CPO still shows N/A")
+st.caption("CPO price converted to USD • % changes use proxy for CPO (due to limited history on FBMPM.L) • Refresh if needed")
