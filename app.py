@@ -18,7 +18,7 @@ WATCHLIST = {
     "ACN": "ACN", "SAP": "SAP",
     "BTC-USD": "BTC", "SOL-USD": "SOL",
     "GLD": "GLD",
-    "FBMPM.L": "CPO (Palm Oil USD)"
+    "CPO=F": "CPO (Palm Oil USD)"   # Changed to better USD futures ticker
 }
 
 finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
@@ -26,46 +26,38 @@ finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
 @st.cache_data(ttl=900, show_spinner="Fetching latest prices...")
 def get_performance(ticker: str):
     try:
-        if ticker == "FBMPM.L":
-            # === CPO Price in USD ===
-            asset = yf.Ticker("FBMPM.L")
-            hist_price = asset.history(period="2d")
-            myr_price = hist_price['Close'].iloc[-1] if not hist_price.empty else None
-
-            # Get exchange rate
-            exchange = yf.Ticker("MYR=X")
-            ex_hist = exchange.history(period="1d")
-            usd_myr = ex_hist['Close'].iloc[-1] if not ex_hist.empty else 4.45
-
-            price = myr_price / usd_myr if myr_price else None
-
-            # === Use a more reliable ticker for % changes (KLSE proxy or fallback) ===
-            hist_asset = yf.Ticker("^KLSE")   # Kuala Lumpur Composite as proxy for history
-            hist_1d = hist_asset.history(period="2d")
-            hist_1w = hist_asset.history(period="7d")
-            hist_1m = hist_asset.history(period="1mo")
+        if ticker == "CPO=F":
+            # Use CME USD Palm Oil futures (direct USD)
+            asset = yf.Ticker("CPO=F")
+            hist_1d = asset.history(period="2d")
+            hist_1w = asset.history(period="7d")
+            hist_1m = asset.history(period="1mo")
+            
+            price = hist_1d['Close'].iloc[-1] if not hist_1d.empty else None
+            asset_for_hist = asset
 
         elif ticker in ["BTC-USD", "SOL-USD"]:
             asset = yf.Ticker(ticker)
             info = asset.fast_info if hasattr(asset, 'fast_info') else asset.info
             price = (info.get('lastPrice') or info.get('regularMarketPrice') or info.get('previousClose'))
+            asset_for_hist = asset
             hist_1d = asset.history(period="2d")
             hist_1w = asset.history(period="7d")
             hist_1m = asset.history(period="1mo")
-            hist_asset = asset
 
         else:
+            # Stocks + GLD
             quote = finnhub_client.quote(ticker)
             price = quote.get('c')
-            hist_asset = yf.Ticker(ticker)
-            hist_1d = hist_asset.history(period="2d")
-            hist_1w = hist_asset.history(period="7d")
-            hist_1m = hist_asset.history(period="1mo")
+            asset_for_hist = yf.Ticker(ticker)
+            hist_1d = asset_for_hist.history(period="2d")
+            hist_1w = asset_for_hist.history(period="7d")
+            hist_1m = asset_for_hist.history(period="1mo")
 
-        if price is None and 'hist_asset' in locals():
-            temp_hist = hist_asset.history(period="1d")
-            if not temp_hist.empty:
-                price = temp_hist['Close'].iloc[-1]
+        if price is None and 'asset_for_hist' in locals():
+            temp = asset_for_hist.history(period="1d")
+            if not temp.empty:
+                price = temp['Close'].iloc[-1]
 
         def calc_pct(hist):
             if hist.empty or len(hist) < 2:
@@ -102,7 +94,7 @@ for ticker, display_name in WATCHLIST.items():
     emoji = "🟢" if (perf.get('change_1d') or 0) >= 0 else "🔴" if perf.get('change_1d') is not None else "⚪"
 
     data_rows.append({
-        "Asset": f"{emoji} {display_name if ticker == 'FBMPM.L' else ticker}",
+        "Asset": f"{emoji} {display_name if ticker == 'CPO=F' else ticker}",
         "Price": f"${perf['price']}" if perf['price'] != "N/A" else "N/A",
         "1D %": d1,
         "1W %": w1,
@@ -132,7 +124,7 @@ styled_df = df.style.applymap(color_percent, subset=['1D %', '1W %', '1M %'])
 
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# ====================== VIBE ======================
+# Overall Vibe
 st.divider()
 if total_with_data > 0:
     bullish_ratio = positive_count / total_with_data
@@ -151,4 +143,4 @@ if st.button("🔄 Refresh All Data"):
     st.cache_data.clear()
     st.rerun()
 
-st.caption("CPO price converted to USD • % changes use proxy for CPO (due to limited history on FBMPM.L) • Refresh if needed")
+st.caption("CPO now using CME USD futures (direct USD price) • Colored % changes • Refresh for latest")
