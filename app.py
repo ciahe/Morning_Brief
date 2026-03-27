@@ -6,7 +6,7 @@ import yfinance as yf
 import time
 
 # ====================== CONFIG ======================
-FINNHUB_API_KEY = "YOUR_FINNHUB_API_KEY_HERE"   # ← Your key here
+FINNHUB_API_KEY = "d734bs9r01qn7f07inigd734bs9r01qn7f07inj0"   # ← Your key here
 
 st.set_page_config(page_title="🌅 Antonny's Morning Brief", page_icon="📈", layout="centered")
 
