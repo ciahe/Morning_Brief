@@ -18,35 +18,44 @@ WATCHLIST = {
     "ACN": "ACN", "SAP": "SAP",
     "BTC-USD": "BTC", "SOL-USD": "SOL",
     "GLD": "GLD",
-    "FBMPM.L": "CPO (Palm Oil USD)"   # Now in USD
+    "FBMPM.L": "CPO (Palm Oil USD)"   # Now shown in USD
 }
 
 finnhub_client = finnhub.Client(api_key=FINNHUB_API_KEY)
 
-@st.cache_data(ttl=600, show_spinner="Fetching latest prices...")
+@st.cache_data(ttl=900, show_spinner="Fetching latest prices...")
 def get_performance(ticker: str):
     try:
         if ticker == "FBMPM.L":
-            # Special handling for CPO in USD
-            asset = yf.Ticker(ticker)
-            hist_1d = asset.history(period="2d")
-            hist_1w = asset.history(period="7d")
-            hist_1m = asset.history(period="1mo")
-            
-            # Get price in MYR
-            myr_price = hist_1d['Close'].iloc[-1] if not hist_1d.empty else None
-            
-            # Get USD/MYR exchange rate
-            usdmYR = yf.Ticker("MYR=X")
-            usdmyr_hist = usdmYR.history(period="1d")
-            exchange_rate = usdmyr_hist['Close'].iloc[-1] if not usdmyr_hist.empty else 4.4  # fallback ~4.4 MYR per USD
-            
-            if myr_price and exchange_rate:
-                price = myr_price / exchange_rate   # Convert to USD
+            # === CPO in USD with multiple fallbacks ===
+            # 1. Try FBMPM.L (MYR index)
+            asset = yf.Ticker("FBMPM.L")
+            hist = asset.history(period="2d")
+            myr_price = hist['Close'].iloc[-1] if not hist.empty else None
+
+            # 2. Get USD/MYR exchange rate
+            exchange = yf.Ticker("MYR=X")
+            ex_hist = exchange.history(period="1d")
+            usd_myr = ex_hist['Close'].iloc[-1] if not ex_hist.empty else 4.45  # safe fallback
+
+            if myr_price and usd_myr:
+                price_usd = myr_price / usd_myr
             else:
-                price = myr_price  # fallback
+                price_usd = None
+
+            # 3. Strong fallback: Try direct USD Palm Oil data if available
+            if price_usd is None or price_usd < 100:  # invalid if too low
+                try:
+                    # Some users succeed with commodity proxies or Investing.com related symbols
+                    fallback = yf.Ticker("CPO=F")  # or try other futures if needed
+                    f_hist = fallback.history(period="2d")
+                    if not f_hist.empty:
+                        price_usd = f_hist['Close'].iloc[-1]
+                except:
+                    pass
 
             asset_for_hist = asset
+            price = price_usd
 
         elif ticker in ["BTC-USD", "SOL-USD"]:
             asset = yf.Ticker(ticker)
@@ -56,16 +65,18 @@ def get_performance(ticker: str):
             asset_for_hist = asset
 
         else:
-            # Stocks + GLD
+            # Normal stocks + GLD
             quote = finnhub_client.quote(ticker)
             price = quote.get('c')
             asset_for_hist = yf.Ticker(ticker)
 
-        if price is None and 'asset_for_hist' in locals():
+        # Final price safety net
+        if price is None or price == 0:
             hist_temp = asset_for_hist.history(period="1d")
             if not hist_temp.empty:
                 price = hist_temp['Close'].iloc[-1]
 
+        # Calculate % changes
         hist_1d = asset_for_hist.history(period="2d")
         hist_1w = asset_for_hist.history(period="7d")
         hist_1m = asset_for_hist.history(period="1mo")
@@ -80,15 +91,15 @@ def get_performance(ticker: str):
         change_1m = calc_pct(hist_1m)
 
         return {
-            "price": round(float(price), 2) if price is not None else "N/A",
+            "price": round(float(price), 2) if price is not None and price > 0 else "N/A",
             "change_1d": change_1d,
             "change_1w": change_1w,
             "change_1m": change_1m
         }
-    except:
+    except Exception as e:
         return {"price": "N/A", "change_1d": None, "change_1w": None, "change_1m": None}
 
-# ====================== BUILD TABLE ======================
+# ====================== TABLE ======================
 st.subheader("📈 Your Watchlist Performance")
 
 data_rows = []
@@ -119,7 +130,6 @@ for ticker, display_name in WATCHLIST.items():
 
 df = pd.DataFrame(data_rows)
 
-# Color styling
 def color_percent(val):
     if val == "N/A":
         return ''
@@ -136,28 +146,23 @@ styled_df = df.style.applymap(color_percent, subset=['1D %', '1W %', '1M %'])
 
 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# ====================== OVERALL MARKET VIBE ======================
+# Overall Vibe
 st.divider()
-
 if total_with_data > 0:
     bullish_ratio = positive_count / total_with_data
     if bullish_ratio >= 0.7:
-        vibe = "🚀 **Strong Bullish** – Tech, crypto, and commodities showing strength."
+        vibe = "🚀 **Strong Bullish**"
     elif bullish_ratio >= 0.55:
-        vibe = "📈 **Mildly Bullish** – Mostly green across the board."
+        vibe = "📈 **Mildly Bullish**"
     elif bullish_ratio >= 0.4:
-        vibe = "⚖️ **Mixed / Neutral** – Balanced moves today."
+        vibe = "⚖️ **Mixed**"
     else:
-        vibe = "📉 **Cautious / Bearish** – More caution in the market."
-else:
-    vibe = "⚪ **Data still loading** – Click Refresh"
+        vibe = "📉 **Cautious / Bearish**"
+    st.subheader("🌡️ Overall Market Vibe")
+    st.markdown(vibe)
 
-st.subheader("🌡️ Overall Market Vibe")
-st.markdown(vibe)
-
-# ====================== REFRESH ======================
 if st.button("🔄 Refresh All Data"):
     st.cache_data.clear()
     st.rerun()
 
-st.caption("CPO converted to USD • Hybrid data (Finnhub + Yahoo Finance) • Colored % changes • Refresh for latest")
+st.caption("CPO converted to USD (with multiple fallbacks) • Colored percentages • Refresh if CPO still shows N/A")
